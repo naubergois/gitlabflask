@@ -1,0 +1,10 @@
+venv
+.idea
+.code
+
+*.pyc
+
+migrations
+.env
+.env.*
+*.pyc

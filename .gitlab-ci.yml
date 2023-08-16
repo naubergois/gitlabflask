@@ -1,0 +1,76 @@
+stages:
+  - checks
+  - flask_docker_deployment
+  - ec2_deployment
+
+check_files:
+  stage: checks
+  script:
+    - |
+      files=$(git diff-tree --no-commit-id --name-only -r $CI_COMMIT_SHA)
+      non_md_files=$(echo "$files" | grep -v '\.md$' || true)
+      if [ -n "$non_md_files" ]; then
+        echo "Non-Markdown files found in the commit. Failing the pipeline."
+        echo "$non_md_files"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "posts"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+
+check_posts_structure:
+  stage: checks
+  script:
+    - |
+      cd app/
+      chmod +x ./verify_post_integrity.py
+      files=$(git diff-tree --no-commit-id --name-only -r $CI_COMMIT_SHA | grep '\.md$' || true)
+      for file in $files; do
+        echo "Checking Markdown file: $file"
+        ./verify_post_integrity.py ../$file
+      done
+      chmod +x ../create_merge_request_for_posts.sh
+      echo "Creating merge request for posts"
+      HOST=${CI_PROJECT_URL} CI_PROJECT_ID=${CI_PROJECT_ID} CI_COMMIT_REF_NAME=${CI_COMMIT_REF_NAME} GITLAB_USER_ID=${GITLAB_USER_ID} PRIVATE_TOKEN=${GITLAB_TOKEN} ../create_merge_request_for_posts.sh
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "posts"'
+      needs:
+        - job: check_files
+
+flask_docker_deployment:
+  stage: flask_docker_deployment
+  image: docker:latest
+  services:
+    - docker:dind
+  only:
+    - main
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - cd app/
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:latest || true
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --tag $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+
+
+ec2_deployment:
+  stage: ec2_deployment
+  only:
+    - main
+  before_script:
+    - 'command -v ssh-agent >/dev/null || ( apk add --update openssh )'
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $EC2_IPADDRESS >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - rm -rf /home/ec2-user/01-flask-devops/
+    - cd ..
+    - ls -al
+    - scp -r -o  StrictHostKeyChecking=no 01-flask-devops ec2-user@$EC2_IPADDRESS:~/.
+    - ssh -o StrictHostKeyChecking=no ec2-user@$EC2_IPADDRESS "cd 01-flask-devops/; sudo docker-compose stop; sudo docker-compose down -v; sh set_environment.sh; sudo docker-compose build && sudo docker-compose up --detach"
