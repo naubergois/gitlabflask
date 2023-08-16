@@ -1,45 +1,18 @@
-version: '3'
+version: '3.6'
 
 services:
-  app:
-    build: ./app
-    image: danydownload/app:latest
-    expose:
-      - 3000
-    restart: unless-stopped
-    environment:
-      - POSTGRES_PASSWORD
-      - POSTGRES_USER
-      - POSTGRES_DB
-      - FLASK_APP
-      - DATABASE
-    depends_on:
-      - db
+  woko_test1:
+    image: woko_app
+    deploy:
+      replicas: 1
+      labels:
+        - traefik.port=80
+        - traefik.enable=true
+        - traefik.docker.network=traefik
+        - traefik.frontend.rule=Host:woko
+    networks:
+      traefik:
 
-  db:
-    image: postgres:alpine
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    ports:
-      - 5432:5432
-    restart: unless-stopped
-    environment:
-      - POSTGRES_PASSWORD
-      - POSTGRES_USER
-      - POSTGRES_DB
-
-  nginx:
-    build: ./nginx
-    image: danydownload/nginx-image:latest
-    restart: unless-stopped
-    depends_on:
-      - app
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /home/ec2-user/https_keys/server.crt:/etc/nginx/server.crt
-      - /home/ec2-user/https_keys/server.key:/etc/nginx/server.key
-
-volumes:
-  postgres_data:
+networks:
+  traefik:
+    external: true
